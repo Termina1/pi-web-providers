@@ -27,13 +27,13 @@ not as a replacement for source inspection or deeper research.
   extraction from `web_search` results in the background and reuse the cached
   pages later for faster follow-up reads
 
-## 📦 Install
+## 🚀 Installation
 
-```bash
+```sh
 pi install npm:pi-web-providers
 ```
 
-## ⚙️ Configure
+## ⚙️ Configuration
 
 Run:
 
@@ -628,26 +628,11 @@ providers unless overridden in a provider's own `settings` block:
 | `retryDelayMs`      | `2000`    | Initial delay before retrying                               |
 | `researchTimeoutMs` | `1800000` | Maximum total time for an async `web_research` job (30 min) |
 
-## 🔎 Live smoke tests
+## 🧹 Uninstall
 
-Use the opt-in live smoke runner to validate the configured providers with the
-same config-resolution and execution path the extension uses at runtime:
-
-```bash
-npm run smoke:live
+```sh
+pi remove npm:pi-web-providers
 ```
-
-Optional filters:
-
-```bash
-npm run smoke:live -- --provider gemini
-npm run smoke:live -- --tool contents
-npm run smoke:live -- --include-research
-```
-
-The default run exercises `search`, `contents`, and `answer`. Research probes
-are excluded unless you pass `--include-research`, because they are slower and
-may incur higher provider cost.
 
 ## 📄 License
 
