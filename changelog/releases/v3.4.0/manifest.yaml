@@ -1,0 +1,10 @@
+created: 2026-06-13
+title: Interactive web research browser
+intro: >-
+  This release makes web research manageable from an interactive browser that shows
+  active and finished researches, supports cancellation, and lets users reopen, copy,
+  or inject completed reports. It also restores Gemini-powered research and grounded
+  answers with the current Gemini steps schema.
+source:
+  mode: sync-stable-queue
+  previous_stable: v3.3.0
