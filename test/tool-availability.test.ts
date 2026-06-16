@@ -880,6 +880,103 @@ describe("managed tool availability", () => {
     ).toEqual(["web_search", "web_contents"]);
   });
 
+  it("exposes configured provider search tools and router tools", async () => {
+    process.env.BRAVE_SEARCH_API_KEY = "brave-key";
+    writeConfig({
+      tools: { search: "brave" },
+      settings: {
+        search: {
+          providerTools: ["brave", "codex"],
+          multiProvider: true,
+          router: true,
+          refinements: {
+            fresh_official: {
+              querySuffix: "official latest",
+              providers: ["brave", "codex"],
+            },
+          },
+        },
+      },
+      providers: {
+        brave: { credentials: { search: "BRAVE_SEARCH_API_KEY" } },
+        codex: {},
+      },
+    });
+
+    const tools = await captureRegisteredTools();
+    const toolNames = tools.map((tool) => tool.name);
+
+    expect(toolNames).toContain("web_search");
+    expect(toolNames).toContain("web_search_brave");
+    expect(toolNames).toContain("web_search_codex");
+    expect(toolNames).toContain("web_search_multi");
+    expect(toolNames).toContain("web_search_agent");
+    expect(
+      tools.find((tool) => tool.name === "web_search_brave")?.parameters
+        ?.properties,
+    ).toHaveProperty("refinement");
+
+    const braveSearch = tools.find((tool) => tool.name === "web_search_brave");
+    const codexSearch = tools.find((tool) => tool.name === "web_search_codex");
+    const multiSearch = tools.find((tool) => tool.name === "web_search_multi");
+    const searchAgent = tools.find((tool) => tool.name === "web_search_agent");
+
+    expect(braveSearch?.description).toContain("Speed score: 1");
+    expect(braveSearch?.promptGuidelines).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("prefer the lowest speed score first"),
+        expect.stringContaining("fast direct search provider"),
+      ]),
+    );
+    expect(codexSearch?.description).toContain("Speed score: 1000");
+    expect(codexSearch?.promptGuidelines).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Use web_search_codex only as an escalation"),
+      ]),
+    );
+    expect(multiSearch?.description).toContain("Speed score: 10");
+    expect(multiSearch?.promptGuidelines).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("prefer a lower-score direct tool"),
+      ]),
+    );
+    expect(searchAgent?.description).toContain("Speed score: 100");
+    expect(searchAgent?.promptGuidelines).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("prefer lower-score direct search tools first"),
+      ]),
+    );
+  });
+
+  it("routes the search agent away from very slow providers by default", () => {
+    process.env.BRAVE_SEARCH_API_KEY = "brave-key";
+    const config = createConfig({
+      settings: {
+        search: {
+          providerTools: ["brave", "codex"],
+          router: true,
+        },
+      },
+      providers: {
+        brave: { credentials: { search: "BRAVE_SEARCH_API_KEY" } },
+        codex: {},
+      },
+    });
+
+    const auto = __test__.buildSearchAgentRequest(config, process.cwd(), {
+      task: "latest Node.js release docs",
+    });
+    expect(auto.providers).toContain("brave");
+    expect(auto.providers).not.toContain("codex");
+
+    const deep = __test__.buildSearchAgentRequest(config, process.cwd(), {
+      task: "deep cross-check Node.js release history",
+    });
+    expect(deep.providers?.length).toBeGreaterThanOrEqual(
+      auto.providers?.length ?? 0,
+    );
+  });
+
   it("surfaces mapped Linkup tools when Linkup is available", () => {
     process.env.LINKUP_API_KEY = "test-key";
 
@@ -926,6 +1023,7 @@ describe("managed tool availability", () => {
 function createConfig(overrides: Partial<WebProviders> = {}): WebProviders {
   return {
     tools: overrides.tools,
+    settings: overrides.settings,
     providers: overrides.providers,
   };
 }

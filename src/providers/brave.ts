@@ -10,7 +10,13 @@ import type {
   ToolOutput,
 } from "../types.js";
 import { defineCapability, defineProvider } from "./definition.js";
-import { asJsonObject, getApiKeyStatus, trimSnippet } from "./shared.js";
+import {
+  asJsonObject,
+  formatConfigValueError,
+  getApiKeyStatus,
+  stringEnum,
+  trimSnippet,
+} from "./shared.js";
 
 const DEFAULT_BASE_URL = "https://api.search.brave.com";
 const BRAVE_API_VERSION: string | undefined = undefined;
@@ -38,9 +44,7 @@ const freshnessOption = Type.Optional(
   }),
 );
 const safesearchOption = Type.Optional(
-  Type.Enum({ off: "off", moderate: "moderate", strict: "strict" } as const, {
-    description: "Safe-search filtering level.",
-  }),
+  stringEnum(["off", "moderate", "strict"], "Safe-search filtering level."),
 );
 const spellcheckOption = Type.Optional(
   Type.Boolean({ description: "Whether Brave may spellcheck the query." }),
@@ -69,19 +73,9 @@ const extraSnippetsOption = Type.Optional(
 const braveSearchOptionsSchema = Type.Object(
   {
     mode: Type.Optional(
-      Type.Enum(
-        {
-          web: "web",
-          llm_context: "llm_context",
-          news: "news",
-          videos: "videos",
-          images: "images",
-          places: "places",
-        } as const,
-        {
-          description:
-            "Brave search mode. Use 'news' for recent journalism or current events, 'videos' for clips/tutorials, 'images' for visual references, 'places' for local businesses, venues, cafes, restaurants, hotels, shops, or near/in-location searches, and 'llm_context' for retrieval context.",
-        },
+      stringEnum(
+        ["web", "llm_context", "news", "videos", "images", "places"],
+        "Brave search mode. Use 'news' for recent journalism or current events, 'videos' for clips/tutorials, 'images' for visual references, 'places' for local businesses, venues, cafes, restaurants, hotels, shops, or near/in-location searches, and 'llm_context' for retrieval context.",
       ),
     ),
     common: Type.Optional(

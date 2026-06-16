@@ -29,7 +29,8 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { type TObject, Type } from "typebox";
-import { loadConfig, writeConfigFile } from "./config.js";
+import { getConfigPath, loadConfig, writeConfigFile } from "./config.js";
+import { stringEnum } from "./providers/shared.js";
 import { type ContentsResponse, renderContentsAnswers } from "./contents.js";
 import { formatElapsed, formatErrorMessage } from "./execution-policy.js";
 import {
@@ -40,8 +41,6 @@ import {
   getSyncedActiveTools,
   MANAGED_TOOL_NAMES,
   type ManagedToolRegistration,
-  refreshManagedTools as refreshManagedToolsAvailability,
-  refreshManagedToolsOnStartup as refreshManagedToolsOnStartupAvailability,
 } from "./managed-tools.js";
 import { buildToolOptionsSchema, type ToolOptionsFor } from "./options.js";
 import {
@@ -102,6 +101,7 @@ import type {
   ProviderConfig,
   ProviderId,
   ProviderRequest,
+  SearchRefinement,
   SearchResponse,
   SearchSettings,
   Settings,
@@ -140,6 +140,219 @@ const RESEARCH_HEARTBEAT_MS = 15000;
 const WEB_RESEARCH_RESULT_MESSAGE_TYPE = "web-research-result";
 const WEB_RESEARCH_REPORT_MESSAGE_TYPE = "web-research-report";
 const WEB_RESEARCH_WIDGET_KEY = "web-research-jobs";
+const EXTENDED_MANAGED_TOOL_NAMES = [
+  ...PROVIDER_IDS.map((providerId) => getProviderSearchToolName(providerId)),
+  "web_search_multi",
+  "web_search_agent",
+];
+const ALL_MANAGED_TOOL_NAMES = [
+  ...MANAGED_TOOL_NAMES,
+  ...EXTENDED_MANAGED_TOOL_NAMES,
+];
+
+interface SearchToolSpeedPreference {
+  speedIndex: number;
+  profile: string;
+  guidance: string;
+}
+
+const DEFAULT_SEARCH_SPEED_PREFERENCE: SearchToolSpeedPreference = {
+  speedIndex: 10,
+  profile: "unknown latency",
+  guidance:
+    "Treat this provider as unknown latency; prefer lower-score providers for quick lookups and escalate here when its specific backend is useful.",
+};
+
+const PROVIDER_SEARCH_SPEED_PREFERENCES: Partial<
+  Record<ProviderId, SearchToolSpeedPreference>
+> = {
+  brave: {
+    speedIndex: 1,
+    profile: "fast/direct",
+    guidance:
+      "Use web_search_brave as a fast direct search provider when Brave's API or modes fit the task; it is not special-cased beyond its estimated speed.",
+  },
+  serper: {
+    speedIndex: 1,
+    profile: "fast/direct",
+    guidance:
+      "Use web_search_serper for fast Google-style search results when Serper-specific modes help.",
+  },
+  linkup: {
+    speedIndex: 3,
+    profile: "fast/structured direct",
+    guidance:
+      "Use web_search_linkup for straightforward search results when Linkup's structured backend is useful.",
+  },
+  ollama: {
+    speedIndex: 3,
+    profile: "fast/direct API",
+    guidance:
+      "Use web_search_ollama for direct Ollama web search when that local/API route is configured and sufficient.",
+  },
+  tavily: {
+    speedIndex: 3,
+    profile: "fast/search API",
+    guidance:
+      "Use web_search_tavily for lightweight web search that may pair well with Tavily extraction.",
+  },
+  exa: {
+    speedIndex: 5,
+    profile: "search-native API",
+    guidance:
+      "Use web_search_exa when neural, keyword, hybrid, domain-filtered, or content-enriched search is useful.",
+  },
+  valyu: {
+    speedIndex: 5,
+    profile: "search-native API",
+    guidance:
+      "Use web_search_valyu when its web/proprietary/news search types match the task.",
+  },
+  firecrawl: {
+    speedIndex: 10,
+    profile: "scrape-capable API",
+    guidance:
+      "Use web_search_firecrawl when scrape-backed result enrichment is useful, not as the default fastest lookup.",
+  },
+  custom: {
+    speedIndex: 10,
+    profile: "custom/unknown latency",
+    guidance:
+      "Use web_search_custom according to the configured wrapper; prefer known lower-score tools when they can answer the task.",
+  },
+  openai: {
+    speedIndex: 30,
+    profile: "LLM-grounded search",
+    guidance:
+      "Use web_search_openai when OpenAI web grounding is specifically useful; prefer lower-score direct search for simple lookup.",
+  },
+  gemini: {
+    speedIndex: 30,
+    profile: "LLM-grounded search",
+    guidance:
+      "Use web_search_gemini when Google grounding is specifically useful; prefer lower-score direct search for simple lookup.",
+  },
+  parallel: {
+    speedIndex: 50,
+    profile: "variable/agentic search",
+    guidance:
+      "Use web_search_parallel when Parallel's agentic or one-shot modes are specifically useful.",
+  },
+  perplexity: {
+    speedIndex: 100,
+    profile: "slow/answer-oriented LLM search",
+    guidance:
+      "Use web_search_perplexity when Perplexity's answer-oriented search is specifically useful; prefer lower-score direct/API search first.",
+  },
+  claude: {
+    speedIndex: 1000,
+    profile: "very-slow/LLM-backed (often minutes)",
+    guidance:
+      "Use web_search_claude only as an escalation for deeper LLM-backed synthesis; direct/API search tools are usually orders of magnitude faster.",
+  },
+  codex: {
+    speedIndex: 1000,
+    profile: "very-slow/LLM-backed (often minutes)",
+    guidance:
+      "Use web_search_codex only as an escalation when direct/API search is insufficient, contradictory, or deep source synthesis is explicitly needed; it can take minutes versus sub-second direct search.",
+  },
+};
+
+const MULTI_SEARCH_SPEED_PREFERENCE: SearchToolSpeedPreference = {
+  speedIndex: 10,
+  profile: "fan-out/variable latency",
+  guidance:
+    "Use web_search_multi when provider comparison or cross-checking matters; prefer a lower-score direct tool when one provider is enough.",
+};
+
+const SEARCH_AGENT_SPEED_PREFERENCE: SearchToolSpeedPreference = {
+  speedIndex: 100,
+  profile: "router/variable latency",
+  guidance:
+    "Use web_search_agent only when routing/search strategy itself is unclear or the user asks for deep/provider-routing research; avoid it for ordinary lookup because it may fan out into slower providers.",
+};
+
+function getProviderSearchSpeedPreference(
+  providerId: ProviderId,
+): SearchToolSpeedPreference {
+  return (
+    PROVIDER_SEARCH_SPEED_PREFERENCES[providerId] ??
+    DEFAULT_SEARCH_SPEED_PREFERENCE
+  );
+}
+
+function formatSearchSpeedPreference(
+  preference: SearchToolSpeedPreference,
+): string {
+  return `Speed score: ${preference.speedIndex} (${preference.profile}; lower is faster/preferred).`;
+}
+
+function buildProviderSearchSpeedDescription(providerId: ProviderId): string {
+  const preference = getProviderSearchSpeedPreference(providerId);
+  return `${formatSearchSpeedPreference(preference)} ${preference.guidance}`;
+}
+
+function buildConfiguredSearchSpeedDescription(providerId: ProviderId): string {
+  const provider = PROVIDERS_BY_ID[providerId];
+  return `Configured provider: ${provider.label}. ${formatSearchSpeedPreference(
+    getProviderSearchSpeedPreference(providerId),
+  )}`;
+}
+
+function buildProviderSearchSpeedGuidelines(
+  toolName: string,
+  providerId: ProviderId,
+): string[] {
+  const preference = getProviderSearchSpeedPreference(providerId);
+  return [
+    `${toolName} has speed score ${preference.speedIndex} (${preference.profile}); when multiple web search tools can solve the task, prefer the lowest speed score first.`,
+    preference.guidance,
+  ];
+}
+
+function buildConfiguredSearchSpeedGuidelines(
+  providerId: ProviderId,
+): string[] {
+  const provider = PROVIDERS_BY_ID[providerId];
+  const preference = getProviderSearchSpeedPreference(providerId);
+  return [
+    `web_search uses ${provider.label} with speed score ${preference.speedIndex} (${preference.profile}); when multiple web search tools can solve the task, prefer the lowest speed score first.`,
+    "Use cheap-first escalation: start with a lower-score direct/API search tool when enough, then escalate to Codex, multi-provider, or web_search_agent only when needed.",
+  ];
+}
+
+function getProviderSearchSpeedIndex(providerId: ProviderId): number {
+  return getProviderSearchSpeedPreference(providerId).speedIndex;
+}
+
+function sortProviderIdsBySearchSpeed(
+  providerIds: readonly ProviderId[],
+): ProviderId[] {
+  const providerOrder = new Map(
+    PROVIDER_IDS.map((providerId, index) => [providerId, index] as const),
+  );
+  return uniqueProviders([...providerIds]).sort(
+    (left, right) =>
+      getProviderSearchSpeedIndex(left) - getProviderSearchSpeedIndex(right) ||
+      (providerOrder.get(left) ?? 0) - (providerOrder.get(right) ?? 0),
+  );
+}
+
+function isSlowSearchProvider(providerId: ProviderId): boolean {
+  return getProviderSearchSpeedIndex(providerId) >= 100;
+}
+
+function isDeepSearchTask(strategy: string, text: string): boolean {
+  return (
+    strategy === "deep" ||
+    /\b(deep|research|comprehensive|thorough|exhaustive|cross-check|crosscheck|compare providers|provider comparison)\b/i.test(
+      text,
+    ) ||
+    /(глубок|исследован|сравн|перепроверь|кросс.?провер|разные источники)/iu.test(
+      text,
+    )
+  );
+}
 
 type ToolUpdateCallback =
   | ((update: {
@@ -163,6 +376,29 @@ interface SearchToolRequest {
   queries: string[];
   maxResults?: number;
   options?: ToolOptionsFor<"search">;
+}
+
+interface ProviderSearchToolRequest {
+  query: string;
+  maxResults?: number;
+  refinement?: string;
+  options?: ToolOptionsFor<"search">;
+}
+
+interface MultiSearchToolRequest {
+  query: string;
+  providers?: ProviderId[];
+  refinements?: string[];
+  maxResults?: number;
+}
+
+interface SearchAgentToolRequest {
+  task: string;
+  query?: string;
+  strategy?: "auto" | "fast" | "deep" | "fresh" | "official" | "broad";
+  providers?: ProviderId[];
+  refinements?: string[];
+  maxResults?: number;
 }
 
 interface AnswerToolRequest {
@@ -400,8 +636,10 @@ function registerWebSearchTool(
     label: "Web Search",
     description:
       `Find likely sources on the public web for up to ${MAX_SEARCH_QUERIES} queries in a single call and return titles, URLs, and snippets grouped by query. ` +
+      `${buildConfiguredSearchSpeedDescription(selectedProviderId)} ` +
       `Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} when needed.`,
     promptGuidelines: buildPromptGuidelines("search", selectedProviderId, [
+      ...buildConfiguredSearchSpeedGuidelines(selectedProviderId),
       "Batch related searches when grouped comparison matters; use separate sibling web_search calls when independent results should surface as soon as they are ready.",
     ]),
     parameters: Type.Object(
@@ -459,6 +697,246 @@ function registerWebSearchTool(
         state.isPartial,
         theme,
       );
+    },
+  });
+}
+
+function registerExtendedSearchTools(
+  pi: ExtensionAPI,
+  config: WebProviders,
+  cwd: string,
+): void {
+  const providerToolIds = getEnabledProviderSearchToolIds(config, cwd);
+  for (const providerId of providerToolIds) {
+    registerProviderSearchTool(pi, providerId, config);
+  }
+
+  const readyProviderIds = getReadyCompatibleProvidersForTool(
+    config,
+    cwd,
+    "search",
+  );
+  if (
+    config.settings?.search?.multiProvider === true &&
+    readyProviderIds.length > 0
+  ) {
+    registerMultiSearchTool(pi, config, readyProviderIds);
+  }
+  if (config.settings?.search?.router === true && readyProviderIds.length > 0) {
+    registerSearchAgentTool(pi, config, readyProviderIds);
+  }
+}
+
+function registerProviderSearchTool(
+  pi: ExtensionAPI,
+  providerId: ProviderId,
+  config: WebProviders,
+): void {
+  const provider = PROVIDERS_BY_ID[providerId];
+  const toolName = getProviderSearchToolName(providerId);
+  const maxAllowedResults = getSearchMaxResultsLimit(providerId);
+
+  pi.registerTool({
+    name: toolName,
+    label: `${provider.label} Search`,
+    description:
+      `Search the public web with ${provider.label}. ${buildProviderSearchSpeedDescription(providerId)} ` +
+      "Supports named refinements from settings.search.refinements. " +
+      `Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} when needed.`,
+    promptGuidelines: [
+      ...buildProviderSearchSpeedGuidelines(toolName, providerId),
+      `Use ${toolName} when the task needs ${provider.label} specifically, provider comparison, or a configured refinement preset.`,
+      ...buildPromptGuidelines("search", providerId, []),
+    ],
+    parameters: Type.Object(
+      {
+        query: Type.String({
+          minLength: 1,
+          description: "Search query to run",
+        }),
+        maxResults: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: maxAllowedResults,
+            description: `Maximum number of results to return (default: ${DEFAULT_MAX_RESULTS})`,
+          }),
+        ),
+        ...optionalField(
+          "refinement",
+          buildOptionalRefinementNameSchema(config),
+        ),
+        ...optionalField(
+          "options",
+          buildStructuredOptionsSchema("search", providerId),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      const request = params as ProviderSearchToolRequest;
+      const loadedConfig = await loadConfig();
+      const refined = resolveRefinedSearchRequest({
+        config: loadedConfig,
+        providerId,
+        query: request.query,
+        refinementName: request.refinement,
+        options: request.options,
+        maxResults: request.maxResults,
+      });
+      return executeSearchToolInternal({
+        config: loadedConfig,
+        explicitProvider: providerId,
+        ctx: { cwd: ctx.cwd },
+        signal: signal ?? undefined,
+        progress: createProgressEmitter(onUpdate),
+        providerOptions: refined.options,
+        maxResults: refined.maxResults,
+        queries: [refined.query],
+      });
+    },
+    renderCall(args, theme) {
+      const params = args as ProviderSearchToolRequest;
+      return renderToolCallHeader(
+        toolName,
+        params.query ? `"${truncateInline(params.query, 80)}"` : "",
+        [
+          params.refinement ? `refinement=${params.refinement}` : undefined,
+          params.maxResults ? `max=${params.maxResults}` : undefined,
+        ].filter((entry): entry is string => entry !== undefined),
+        theme,
+      );
+    },
+    renderResult(result, state, theme) {
+      return renderSearchToolResult(
+        result,
+        state.expanded,
+        state.isPartial,
+        theme,
+      );
+    },
+  });
+}
+
+function registerMultiSearchTool(
+  pi: ExtensionAPI,
+  config: WebProviders,
+  readyProviderIds: readonly ProviderId[],
+): void {
+  pi.registerTool({
+    name: "web_search_multi",
+    label: "Multi Web Search",
+    description:
+      `${formatSearchSpeedPreference(MULTI_SEARCH_SPEED_PREFERENCE)} ` +
+      "Run one query across multiple configured search providers and/or named refinements, returning grouped results with latency and errors.",
+    promptGuidelines: [
+      MULTI_SEARCH_SPEED_PREFERENCE.guidance,
+      "Use web_search_multi when provider comparison matters, when freshness/official-source tradeoffs are unclear, or when the user asks to search with several web providers.",
+      "Prefer web_search_agent only when you want the tool to choose providers/refinements automatically and that routing choice matters more than speed.",
+    ],
+    parameters: Type.Object(
+      {
+        query: Type.String({
+          minLength: 1,
+          description: "Search query to run",
+        }),
+        providers: Type.Optional(
+          Type.Array(buildProviderIdSchema(readyProviderIds), {
+            minItems: 1,
+            description:
+              "Providers to run. Defaults to settings.search.providerTools or ready search providers.",
+          }),
+        ),
+        refinements: Type.Optional(
+          Type.Array(buildRefinementNameValueSchema(config) ?? Type.String(), {
+            minItems: 1,
+            description:
+              "Named refinements to apply. Omit for the unmodified query.",
+          }),
+        ),
+        maxResults: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: MAX_ALLOWED_RESULTS,
+            description: `Maximum number of results per provider/refinement (default: ${DEFAULT_MAX_RESULTS})`,
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      const request = params as MultiSearchToolRequest;
+      return executeMultiSearchTool({
+        config: await loadConfig(),
+        request,
+        ctx: { cwd: ctx.cwd },
+        signal: signal ?? undefined,
+        progress: createProgressEmitter(onUpdate),
+      });
+    },
+  });
+}
+
+function registerSearchAgentTool(
+  pi: ExtensionAPI,
+  config: WebProviders,
+  readyProviderIds: readonly ProviderId[],
+): void {
+  pi.registerTool({
+    name: "web_search_agent",
+    label: "Web Search Agent",
+    description:
+      `${formatSearchSpeedPreference(SEARCH_AGENT_SPEED_PREFERENCE)} ` +
+      "Heuristically route a web-search task across providers and configured refinements. It selects search providers, applies presets, runs searches, and returns a trace.",
+    promptGuidelines: [
+      SEARCH_AGENT_SPEED_PREFERENCE.guidance,
+      "Avoid web_search_agent for ordinary lookup; prefer lower-score direct search tools first, then escalate only if results are insufficient or contradictory.",
+      "Use direct provider tools such as web_search_brave or web_search_codex when the user asks for a specific provider.",
+    ],
+    parameters: Type.Object(
+      {
+        task: Type.String({
+          minLength: 1,
+          description: "The web search task or question",
+        }),
+        query: Type.Optional(
+          Type.String({
+            minLength: 1,
+            description: "Optional concrete search query. Defaults to task.",
+          }),
+        ),
+        strategy: Type.Optional(
+          stringEnum(
+            ["auto", "fast", "deep", "fresh", "official", "broad"],
+            "Routing strategy. Default: auto.",
+          ),
+        ),
+        providers: Type.Optional(
+          Type.Array(buildProviderIdSchema(readyProviderIds), {
+            minItems: 1,
+            description: "Optional provider override.",
+          }),
+        ),
+        refinements: Type.Optional(
+          Type.Array(buildRefinementNameValueSchema(config) ?? Type.String(), {
+            minItems: 1,
+            description: "Optional refinement override.",
+          }),
+        ),
+        maxResults: Type.Optional(
+          Type.Integer({ minimum: 1, maximum: MAX_ALLOWED_RESULTS }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      const request = params as SearchAgentToolRequest;
+      return executeSearchAgentTool({
+        config: await loadConfig(),
+        request,
+        ctx: { cwd: ctx.cwd },
+        signal: signal ?? undefined,
+        progress: createProgressEmitter(onUpdate),
+      });
     },
   });
 }
@@ -687,6 +1165,41 @@ async function runWebProvidersConfig(
   });
 }
 
+function formatStartupConfigError(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return `web-providers config error: ${detail.replace(getConfigPath(), "~/.pi/agent/web-providers.json")}`;
+}
+
+function getSyncedActiveToolsWithExtended(
+  config: WebProviders,
+  cwd: string,
+  activeToolNames: readonly string[],
+  options: { addAvailable: boolean },
+): Set<string> {
+  const nextActiveTools = getSyncedActiveTools(
+    config,
+    cwd,
+    activeToolNames,
+    options,
+  );
+  const availableExtendedToolNames = new Set(
+    getAvailableExtendedSearchToolNames(config, cwd),
+  );
+
+  for (const toolName of EXTENDED_MANAGED_TOOL_NAMES) {
+    if (availableExtendedToolNames.has(toolName)) {
+      if (options.addAvailable) {
+        nextActiveTools.add(toolName);
+      }
+      continue;
+    }
+
+    nextActiveTools.delete(toolName);
+  }
+
+  return nextActiveTools;
+}
+
 async function refreshManagedTools(
   pi: ExtensionAPI,
   webResearchLifecycle: {
@@ -698,12 +1211,18 @@ async function refreshManagedTools(
   cwd: string,
   options: { addAvailable: boolean },
 ): Promise<void> {
-  await refreshManagedToolsAvailability(
+  const config = await loadConfig();
+  registerManagedTools(pi, webResearchLifecycle, {
+    search: getAvailableProviderIdsForCapability(config, cwd, "search"),
+    contents: getAvailableProviderIdsForCapability(config, cwd, "contents"),
+    answer: getAvailableProviderIdsForCapability(config, cwd, "answer"),
+    research: getAvailableProviderIdsForCapability(config, cwd, "research"),
+  });
+  registerExtendedSearchTools(pi, config, cwd);
+
+  await syncManagedToolAvailability(
     pi,
-    (providerIdsByCapability) =>
-      registerManagedTools(pi, webResearchLifecycle, providerIdsByCapability),
-    cwd,
-    options,
+    getSyncedActiveToolsWithExtended(config, cwd, pi.getActiveTools(), options),
   );
 }
 
@@ -718,13 +1237,38 @@ async function refreshManagedToolsOnStartup(
   cwd: string,
   options: { addAvailable: boolean },
 ): Promise<void> {
-  await refreshManagedToolsOnStartupAvailability(
-    pi,
-    (providerIdsByCapability) =>
-      registerManagedTools(pi, webResearchLifecycle, providerIdsByCapability),
-    cwd,
-    options,
-  );
+  try {
+    await refreshManagedTools(pi, webResearchLifecycle, cwd, options);
+  } catch (error) {
+    const message = formatStartupConfigError(error);
+    pi.sendMessage({
+      customType: "web-providers-config-error",
+      content: message,
+      display: true,
+    });
+    await syncManagedToolAvailability(
+      pi,
+      new Set(
+        pi
+          .getActiveTools()
+          .filter((toolName) => !ALL_MANAGED_TOOL_NAMES.includes(toolName)),
+      ),
+    );
+  }
+}
+
+async function syncManagedToolAvailability(
+  pi: ExtensionAPI,
+  nextActiveTools: ReadonlySet<string>,
+): Promise<void> {
+  const activeTools = pi.getActiveTools();
+  const changed =
+    activeTools.length !== nextActiveTools.size ||
+    activeTools.some((toolName) => !nextActiveTools.has(toolName));
+
+  if (changed) {
+    pi.setActiveTools(Array.from(nextActiveTools));
+  }
 }
 
 function getSearchMaxResultsLimit(providerId: ProviderId): number {
@@ -732,6 +1276,171 @@ function getSearchMaxResultsLimit(providerId: ProviderId): number {
     Record<Tool, { limits?: { maxResults?: number } }>
   >;
   return capabilities.search?.limits?.maxResults ?? MAX_ALLOWED_RESULTS;
+}
+
+function getProviderSearchToolName(providerId: ProviderId): string {
+  return `web_search_${providerId.replace(/[^a-z0-9]+/g, "_")}`;
+}
+
+function buildProviderIdSchema(providerIds: readonly ProviderId[]) {
+  return stringEnum([...providerIds]);
+}
+
+function getAvailableExtendedSearchToolNames(
+  config: WebProviders,
+  cwd: string,
+): string[] {
+  const toolNames = getEnabledProviderSearchToolIds(config, cwd).map(
+    getProviderSearchToolName,
+  );
+  const readySearchProviders = getReadyCompatibleProvidersForTool(
+    config,
+    cwd,
+    "search",
+  );
+  if (
+    config.settings?.search?.multiProvider === true &&
+    readySearchProviders.length > 0
+  ) {
+    toolNames.push("web_search_multi");
+  }
+  if (
+    config.settings?.search?.router === true &&
+    readySearchProviders.length > 0
+  ) {
+    toolNames.push("web_search_agent");
+  }
+  return toolNames;
+}
+
+function getEnabledProviderSearchToolIds(
+  config: WebProviders,
+  cwd: string,
+): ProviderId[] {
+  const requested = config.settings?.search?.providerTools ?? [];
+  if (requested.length === 0) {
+    return [];
+  }
+  const ready = new Set(
+    getReadyCompatibleProvidersForTool(config, cwd, "search"),
+  );
+  return requested.filter((providerId) => ready.has(providerId));
+}
+
+const DEFAULT_SEARCH_REFINEMENTS: Record<string, SearchRefinement> = {
+  fresh: {
+    description: "Prefer current, recently updated, date-bearing sources.",
+    querySuffix: `latest current today ${new Date().toISOString().slice(0, 10)}`,
+    options: {
+      brave: { web: { freshness: "pd" } },
+      codex: { webSearchMode: "live" },
+    },
+  },
+  official: {
+    description: "Prefer official, primary, authoritative sources.",
+    querySuffix: "official primary source documentation",
+  },
+  russian_news: {
+    description: "Prefer Russian-language recent news sources.",
+    querySuffix: "последние новости сегодня",
+    providers: ["brave", "codex"],
+    options: {
+      brave: { common: { country: "RU", search_lang: "ru", ui_lang: "ru-RU" } },
+      codex: { webSearchMode: "live" },
+    },
+  },
+  broad: {
+    description: "Search broadly without provider-specific narrowing.",
+  },
+};
+
+function getEffectiveSearchRefinements(
+  config: WebProviders,
+): Record<string, SearchRefinement> {
+  return {
+    ...DEFAULT_SEARCH_REFINEMENTS,
+    ...(config.settings?.search?.refinements ?? {}),
+  };
+}
+
+function buildRefinementNameValueSchema(config: WebProviders) {
+  const names = Object.keys(getEffectiveSearchRefinements(config));
+  if (names.length === 0) {
+    return undefined;
+  }
+  return stringEnum(names);
+}
+
+function buildOptionalRefinementNameSchema(config: WebProviders) {
+  const schema = buildRefinementNameValueSchema(config);
+  return schema ? Type.Optional(schema) : undefined;
+}
+
+function resolveRefinedSearchRequest({
+  config,
+  providerId,
+  query,
+  refinementName,
+  options,
+  maxResults,
+}: {
+  config: WebProviders;
+  providerId: ProviderId;
+  query: string;
+  refinementName?: string;
+  options?: Record<string, unknown>;
+  maxResults?: number;
+}): { query: string; options?: Record<string, unknown>; maxResults?: number } {
+  if (!refinementName) {
+    return { query, options, maxResults };
+  }
+
+  const refinement = getEffectiveSearchRefinements(config)[refinementName];
+  if (!refinement) {
+    throw new Error(`Unknown search refinement '${refinementName}'.`);
+  }
+  if (refinement.providers && !refinement.providers.includes(providerId)) {
+    throw new Error(
+      `Search refinement '${refinementName}' is not configured for provider '${providerId}'.`,
+    );
+  }
+
+  const refinedQuery = [
+    refinement.queryPrefix,
+    query,
+    refinement.querySuffix,
+    refinement.instructions,
+  ]
+    .filter((part) => typeof part === "string" && part.trim().length > 0)
+    .join(" ");
+
+  return {
+    query: refinedQuery,
+    options: mergePlainObjects(refinement.options?.[providerId], options),
+    maxResults: maxResults ?? refinement.maxResults,
+  };
+}
+
+function mergePlainObjects(
+  base: Record<string, unknown> | undefined,
+  override: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!base && !override) {
+    return undefined;
+  }
+  const result: Record<string, unknown> = { ...(base ?? {}) };
+  for (const [key, value] of Object.entries(override ?? {})) {
+    const existing = result[key];
+    result[key] =
+      isPlainRecord(existing) && isPlainRecord(value)
+        ? mergePlainObjects(existing, value)
+        : value;
+  }
+  return result;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function buildPromptGuidelines(
@@ -782,6 +1491,363 @@ function resolveProviderOptionsSchema(
   return (
     provider.capabilities as Partial<Record<Tool, { options?: TObject }>>
   )[capability]?.options;
+}
+
+interface MultiSearchPlanItem {
+  providerId: ProviderId;
+  providerLabel: string;
+  query: string;
+  refinement?: string;
+  options?: Record<string, unknown>;
+  maxResults?: number;
+}
+
+type MultiSearchOutcome =
+  | (MultiSearchPlanItem & {
+      response: SearchResponse;
+      elapsedMs: number;
+      error?: undefined;
+    })
+  | (MultiSearchPlanItem & {
+      error: string;
+      elapsedMs: number;
+      response?: undefined;
+    });
+
+async function executeMultiSearchTool({
+  config,
+  request,
+  ctx,
+  signal,
+  progress,
+}: {
+  config: WebProviders;
+  request: MultiSearchToolRequest;
+  ctx: { cwd: string };
+  signal: AbortSignal | null | undefined;
+  progress?: ProgressCallback;
+}) {
+  await cleanupContentStore();
+  const plan = buildMultiSearchPlan({ config, request, ctx });
+  const outcomes = await runMultiSearchPlan({
+    config,
+    plan,
+    ctx,
+    signal,
+    progress,
+  });
+  const rendered = await truncateAndSave(
+    formatMultiSearchOutcomes(request.query, outcomes),
+    "web-search-multi",
+  );
+  return {
+    content: [{ type: "text" as const, text: rendered }],
+    details: {
+      tool: "web_search_multi",
+      query: request.query,
+      providerCount: new Set(plan.map((item) => item.providerId)).size,
+      refinementCount: new Set(plan.map((item) => item.refinement ?? "default"))
+        .size,
+      resultCount: outcomes.reduce(
+        (total, outcome) => total + (outcome.response?.results.length ?? 0),
+        0,
+      ),
+      failedRequestCount: outcomes.filter(
+        (outcome) => outcome.error !== undefined,
+      ).length,
+    },
+  };
+}
+
+async function executeSearchAgentTool({
+  config,
+  request,
+  ctx,
+  signal,
+  progress,
+}: {
+  config: WebProviders;
+  request: SearchAgentToolRequest;
+  ctx: { cwd: string };
+  signal: AbortSignal | null | undefined;
+  progress?: ProgressCallback;
+}) {
+  const routed = buildSearchAgentRequest(config, ctx.cwd, request);
+  const plan = buildMultiSearchPlan({ config, request: routed, ctx });
+  const outcomes = await runMultiSearchPlan({
+    config,
+    plan,
+    ctx,
+    signal,
+    progress,
+  });
+  const trace = plan
+    .map(
+      (item) =>
+        `- ${item.providerLabel}${item.refinement ? `/${item.refinement}` : ""}: ${item.query}`,
+    )
+    .join("\n");
+  const rendered = await truncateAndSave(
+    [
+      `Routing strategy: ${request.strategy ?? "auto"}`,
+      "",
+      "Trace:",
+      trace,
+      "",
+      formatMultiSearchOutcomes(routed.query, outcomes),
+    ].join("\n"),
+    "web-search-agent",
+  );
+  return {
+    content: [{ type: "text" as const, text: rendered }],
+    details: {
+      tool: "web_search_agent",
+      strategy: request.strategy ?? "auto",
+      query: routed.query,
+      providers: routed.providers,
+      refinements: routed.refinements,
+      resultCount: outcomes.reduce(
+        (total, outcome) => total + (outcome.response?.results.length ?? 0),
+        0,
+      ),
+      failedRequestCount: outcomes.filter(
+        (outcome) => outcome.error !== undefined,
+      ).length,
+    },
+  };
+}
+
+function buildMultiSearchPlan({
+  config,
+  request,
+  ctx,
+}: {
+  config: WebProviders;
+  request: MultiSearchToolRequest;
+  ctx: { cwd: string };
+}): MultiSearchPlanItem[] {
+  const readyProviders = getReadyCompatibleProvidersForTool(
+    config,
+    ctx.cwd,
+    "search",
+  );
+  const readyProviderSet = new Set(readyProviders);
+  const defaultProviders = getEnabledProviderSearchToolIds(config, ctx.cwd);
+  const providers = (
+    request.providers?.length
+      ? request.providers
+      : defaultProviders.length > 0
+        ? defaultProviders
+        : readyProviders
+  ).filter((providerId) => readyProviderSet.has(providerId));
+
+  if (providers.length === 0) {
+    throw new Error(
+      "No ready search providers are available for web_search_multi.",
+    );
+  }
+
+  const refinements = request.refinements?.length
+    ? request.refinements
+    : [undefined];
+  const plan: MultiSearchPlanItem[] = [];
+  for (const providerId of providers) {
+    for (const refinementName of refinements) {
+      const refined = resolveRefinedSearchRequest({
+        config,
+        providerId,
+        query: request.query,
+        refinementName,
+        maxResults: request.maxResults,
+      });
+      plan.push({
+        providerId,
+        providerLabel: PROVIDERS_BY_ID[providerId].label,
+        refinement: refinementName,
+        query: refined.query,
+        options: refined.options,
+        maxResults: refined.maxResults,
+      });
+    }
+  }
+  return plan;
+}
+
+async function runMultiSearchPlan({
+  config,
+  plan,
+  ctx,
+  signal,
+  progress,
+}: {
+  config: WebProviders;
+  plan: MultiSearchPlanItem[];
+  ctx: { cwd: string };
+  signal: AbortSignal | null | undefined;
+  progress?: ProgressCallback;
+}): Promise<MultiSearchOutcome[]> {
+  let completedCount = 0;
+  const reportProgress = (message: string) => {
+    progress?.(`${message} (${completedCount}/${plan.length} completed)`);
+  };
+  reportProgress("Starting multi-provider search");
+  const settled = await Promise.allSettled(
+    plan.map(async (item) => {
+      const startedAt = Date.now();
+      try {
+        progress?.(
+          `Searching via ${item.providerLabel}${item.refinement ? `/${item.refinement}` : ""}: ${item.query}`,
+        );
+        const response = (await executeRawProviderRequest({
+          capability: "search",
+          config,
+          explicitProvider: item.providerId,
+          ctx,
+          signal,
+          options: item.options,
+          maxResults: item.maxResults,
+          query: item.query,
+        })) as SearchResponse;
+        completedCount += 1;
+        reportProgress("Multi-provider search running");
+        return { ...item, response, elapsedMs: Date.now() - startedAt };
+      } catch (error) {
+        completedCount += 1;
+        reportProgress("Multi-provider search running");
+        return {
+          ...item,
+          error: formatErrorMessage(error),
+          elapsedMs: Date.now() - startedAt,
+        };
+      }
+    }),
+  );
+  return settled.map((result, index) =>
+    result.status === "fulfilled"
+      ? result.value
+      : {
+          ...plan[index]!,
+          error: formatErrorMessage(result.reason),
+          elapsedMs: 0,
+        },
+  );
+}
+
+function buildSearchAgentRequest(
+  config: WebProviders,
+  cwd: string,
+  request: SearchAgentToolRequest,
+): MultiSearchToolRequest {
+  const task = request.query?.trim() || request.task.trim();
+  const readyProviders = getReadyCompatibleProvidersForTool(
+    config,
+    cwd,
+    "search",
+  );
+  const providerTools = getEnabledProviderSearchToolIds(config, cwd);
+  const has = (providerId: ProviderId) => readyProviders.includes(providerId);
+  const strategy = request.strategy ?? "auto";
+  const lower = `${request.task} ${request.query ?? ""}`.toLowerCase();
+  const cyrillic = /[а-яё]/iu.test(lower);
+  const freshnessSensitive =
+    strategy === "fresh" ||
+    /\b(today|current|latest|now|price|weather|news|status|release)\b/i.test(
+      lower,
+    ) ||
+    /(сегодня|сейчас|последн|новост|курс|погода|цена)/iu.test(lower);
+  const officialSensitive =
+    strategy === "official" ||
+    /\b(official|docs?|documentation|release notes|spec|standard|source)\b/i.test(
+      lower,
+    ) ||
+    /(официальн|документац|релиз)/iu.test(lower);
+
+  const configuredProviders = sortProviderIdsBySearchSpeed(
+    uniqueProviders([...providerTools, ...readyProviders]).filter(has),
+  );
+  const directProviders = configuredProviders.filter(
+    (providerId) => !isSlowSearchProvider(providerId),
+  );
+  const cheapFirstProviders =
+    directProviders.length > 0 ? directProviders : configuredProviders;
+  const configuredSlowProviders =
+    configuredProviders.filter(isSlowSearchProvider);
+  const slowProviders = uniqueProviders([
+    ...configuredSlowProviders,
+    ...sortProviderIdsBySearchSpeed(
+      readyProviders.filter(isSlowSearchProvider),
+    ),
+  ]);
+  const deepSearch = isDeepSearchTask(strategy, lower);
+
+  const providers: ProviderId[] = request.providers?.length
+    ? request.providers
+    : deepSearch
+      ? uniqueProviders([
+          ...slowProviders.slice(0, 1),
+          ...cheapFirstProviders,
+          ...slowProviders,
+        ])
+          .filter(has)
+          .slice(0, strategy === "broad" ? 4 : 2)
+      : strategy === "fast"
+        ? cheapFirstProviders.slice(0, 1)
+        : cheapFirstProviders.slice(0, strategy === "broad" ? 4 : 2);
+
+  const refinements = request.refinements?.length
+    ? request.refinements
+    : uniqueStrings([
+        ...(freshnessSensitive ? [cyrillic ? "russian_news" : "fresh"] : []),
+        ...(officialSensitive ? ["official"] : []),
+      ]).filter((name) => getEffectiveSearchRefinements(config)[name]);
+
+  return {
+    query: task,
+    providers,
+    refinements: refinements.length > 0 ? refinements : undefined,
+    maxResults: request.maxResults,
+  };
+}
+
+function uniqueProviders(providerIds: ProviderId[]): ProviderId[] {
+  return [...new Set(providerIds)];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function formatMultiSearchOutcomes(
+  originalQuery: string,
+  outcomes: MultiSearchOutcome[],
+): string {
+  const lines = [`Query: ${originalQuery}`, ""];
+  for (const outcome of outcomes) {
+    const suffix = outcome.refinement ? ` / ${outcome.refinement}` : "";
+    lines.push(
+      `## ${outcome.providerLabel}${suffix} (${Math.round(outcome.elapsedMs)}ms)`,
+    );
+    if (outcome.error || !outcome.response) {
+      lines.push(
+        `Search failed: ${outcome.error ?? "No response returned."}`,
+        "",
+      );
+      continue;
+    }
+    const results = outcome.response.results;
+    if (results.length === 0) {
+      lines.push("No results returned.", "");
+      continue;
+    }
+    for (const [index, result] of results.entries()) {
+      lines.push(`${index + 1}. [${result.title}](<${result.url}>)`);
+      if (result.snippet) {
+        lines.push(`   ${result.snippet}`);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
 }
 
 async function executeSearchTool({
@@ -4555,6 +5621,7 @@ export const __test__ = {
   getEnabledCompatibleProvidersForTool: getReadyCompatibleProvidersForTool,
   buildStructuredOptionsSchema,
   getAvailableProviderIdsForCapability,
+  buildSearchAgentRequest,
   getProviderStatusForTool,
   getSyncedActiveTools,
   renderCallHeader,

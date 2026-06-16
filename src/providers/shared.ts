@@ -1,3 +1,4 @@
+import { Type } from "typebox";
 import { resolveConfigValue } from "../config-values.js";
 import type {
   ProviderCapabilityStatus,
@@ -71,6 +72,23 @@ export function getApiKeyStatus(
 
 export function isSecretReference(reference: string): boolean {
   return reference.startsWith("!") || /^[A-Z][A-Z0-9_]*$/.test(reference);
+}
+
+/**
+ * Creates a JSON Schema with explicit `type: "string"` + `enum` constraint.
+ * Unlike Type.Enum() from TypeBox, this generates `{ type: "string", enum: [...] }`
+ * which MoonShot/Kimi and other strict JSON Schema validators require.
+ */
+export function stringEnum<T extends string>(
+  values: readonly T[],
+  description?: string,
+) {
+  return Type.Unsafe<T>({
+    type: "string" as const,
+    ...(description
+      ? { enum: [...values], description }
+      : { enum: [...values] }),
+  });
 }
 
 export function formatConfigValueError(error: unknown): string {

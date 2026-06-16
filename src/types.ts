@@ -25,10 +25,28 @@ export const TOOLS = ["search", "contents", "answer", "research"] as const;
 export type Tool = (typeof TOOLS)[number];
 export type Tools = Partial<Record<Tool, ProviderId>>;
 
+export interface SearchRefinement {
+  description?: string;
+  queryPrefix?: string;
+  querySuffix?: string;
+  instructions?: string;
+  providers?: ProviderId[];
+  maxResults?: number;
+  options?: Partial<Record<ProviderId, Record<string, unknown>>>;
+}
+
 export interface SearchSettings {
   provider?: ProviderId;
   maxUrls?: number;
   ttlMs?: number;
+  /** Expose provider-specific search tools such as web_search_brave. */
+  providerTools?: ProviderId[];
+  /** Expose web_search_multi for running several providers/refinements in one call. */
+  multiProvider?: boolean;
+  /** Expose web_search_agent for heuristic provider/refinement routing. */
+  router?: boolean;
+  /** Named query/provider option presets available to search tools. */
+  refinements?: Record<string, SearchRefinement>;
 }
 
 export interface ToolOutcomeSummary {

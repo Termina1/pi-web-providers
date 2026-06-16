@@ -64,6 +64,40 @@ describe("config parsing", () => {
     ).toThrow(/Unknown tools in test-config.json: summarize/);
   });
 
+  it("parses search provider tools, router, and refinements", () => {
+    const config = parseConfig(
+      JSON.stringify({
+        settings: {
+          search: {
+            providerTools: ["brave", "codex"],
+            multiProvider: true,
+            router: true,
+            refinements: {
+              fresh_official: {
+                description: "fresh official sources",
+                querySuffix: "official latest",
+                providers: ["brave", "codex"],
+                maxResults: 3,
+                options: {
+                  brave: { web: { freshness: "pd" } },
+                  codex: { webSearchMode: "live" },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "test-config.json",
+    );
+
+    expect(config.settings?.search?.providerTools).toEqual(["brave", "codex"]);
+    expect(config.settings?.search?.multiProvider).toBe(true);
+    expect(config.settings?.search?.router).toBe(true);
+    expect(
+      config.settings?.search?.refinements?.fresh_official?.querySuffix,
+    ).toBe("official latest");
+  });
+
   it("rejects provider enablement", () => {
     expect(() =>
       parseConfig(

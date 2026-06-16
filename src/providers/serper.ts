@@ -12,7 +12,7 @@ import type {
 } from "../types.js";
 import { SERPER_SEARCH_MODE_VALUES } from "../types.js";
 import { defineCapability, defineProvider } from "./definition.js";
-import { asJsonObject, getApiKeyStatus, trimSnippet } from "./shared.js";
+import { asJsonObject, getApiKeyStatus, stringEnum, trimSnippet } from "./shared.js";
 
 const DEFAULT_BASE_URL = "https://google.serper.dev";
 const DEFAULT_SCRAPE_URL = "https://scrape.serper.dev";
@@ -116,10 +116,11 @@ const serperSearchPromptGuidelines = [
 const serperSearchOptionsSchema = Type.Object(
   {
     mode: Type.Optional(
-      Type.Enum(SERPER_SEARCH_MODE_VALUES, {
-        description:
-          "Serper search type. Use 'search' for web results, 'news' for recent journalism/current events, 'images' for visual references, 'videos' for clips/tutorials, 'places' or 'maps' for local businesses/venues, 'reviews' for Google business reviews by place ID/CID/FID or query, 'shopping' for products, 'product-reviews' for product reviews, 'lens' for reverse image search, 'scholar' for scholarly articles, 'patents' for patents, 'autocomplete' for suggestions, and 'webpage' to scrape a URL.",
-      }),
+      stringEnum(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- known values
+        Object.values(SERPER_SEARCH_MODE_VALUES) as readonly string[],
+        "Serper search type. Use 'search' for web results, 'news' for recent journalism/current events, 'images' for visual references, 'videos' for clips/tutorials, 'places' or 'maps' for local businesses/venues, 'reviews' for Google business reviews by place ID/CID/FID or query, 'shopping' for products, 'product-reviews' for product reviews, 'lens' for reverse image search, 'scholar' for scholarly articles, 'patents' for patents, 'autocomplete' for suggestions, and 'webpage' to scrape a URL.",
+      ),
     ),
     gl: Type.Optional(
       Type.String({

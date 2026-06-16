@@ -575,12 +575,12 @@ export function formatRelativeDate(timestampMs: number, now: number): string {
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
   const date = new Date(timestampMs);
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  if (date.getFullYear() === new Date(now).getFullYear()) {
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  if (date.getUTCFullYear() === new Date(now).getUTCFullYear()) {
     return `${month}-${day}`;
   }
-  return `${date.getFullYear()}-${month}-${day}`;
+  return `${date.getUTCFullYear()}-${month}-${day}`;
 }
 
 function providerLabel(providerId: string): string {

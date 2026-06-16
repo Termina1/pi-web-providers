@@ -16,6 +16,7 @@ import type {
   CustomCommandConfig,
   ProviderConfig,
   ProviderId,
+  SearchRefinement,
   SearchSettings,
   Settings,
   Tool,
@@ -498,7 +499,14 @@ function parseSearchSettings(
     `'${field}' in ${source} must be a JSON object.`,
   );
   const unknownFields = Object.keys(settings).filter(
-    (key) => key !== "provider" && key !== "maxUrls" && key !== "ttlMs",
+    (key) =>
+      key !== "provider" &&
+      key !== "maxUrls" &&
+      key !== "ttlMs" &&
+      key !== "providerTools" &&
+      key !== "multiProvider" &&
+      key !== "router" &&
+      key !== "refinements",
   );
   if (unknownFields.length > 0) {
     throw new Error(
@@ -530,7 +538,184 @@ function parseSearchSettings(
       source,
       `${field}.ttlMs`,
     ),
+    providerTools: parseOptionalProviderIdArray(
+      settings.providerTools,
+      source,
+      `${field}.providerTools`,
+      "search",
+    ),
+    multiProvider: parseOptionalBoolean(
+      settings.multiProvider,
+      source,
+      `${field}.multiProvider`,
+    ),
+    router: parseOptionalBoolean(settings.router, source, `${field}.router`),
+    refinements: parseOptionalSearchRefinements(
+      settings.refinements,
+      source,
+      `${field}.refinements`,
+    ),
   };
+}
+
+function parseOptionalProviderIdArray(
+  value: unknown,
+  source: string,
+  field: string,
+  requiredTool: Tool,
+): ProviderId[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== "string")
+  ) {
+    throw new Error(
+      `'${field}' in ${source} must be an array of provider ids.`,
+    );
+  }
+  const providerIds = value.map((entry, index) =>
+    parseLiteral(entry, source, `${field}[${index}]`, PROVIDER_IDS),
+  );
+  for (const providerId of providerIds) {
+    if (!supportsTool(providerId, requiredTool)) {
+      throw new Error(
+        `'${field}' in ${source} must only include providers that support '${requiredTool}'.`,
+      );
+    }
+  }
+  return [...new Set(providerIds)];
+}
+
+function parseOptionalBoolean(
+  value: unknown,
+  source: string,
+  field: string,
+): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`'${field}' in ${source} must be a boolean.`);
+  }
+  return value;
+}
+
+function parseOptionalSearchRefinements(
+  value: unknown,
+  source: string,
+  field: string,
+): Record<string, SearchRefinement> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const refinements = requireObject(
+    value,
+    `'${field}' in ${source} must be a JSON object.`,
+  );
+  return Object.fromEntries(
+    Object.entries(refinements).map(([name, entry]) => [
+      name,
+      parseSearchRefinement(entry, source, `${field}.${name}`),
+    ]),
+  );
+}
+
+function parseSearchRefinement(
+  value: unknown,
+  source: string,
+  field: string,
+): SearchRefinement {
+  const refinement = requireObject(
+    value,
+    `'${field}' in ${source} must be a JSON object.`,
+  );
+  const unknownFields = Object.keys(refinement).filter(
+    (key) =>
+      key !== "description" &&
+      key !== "queryPrefix" &&
+      key !== "querySuffix" &&
+      key !== "instructions" &&
+      key !== "providers" &&
+      key !== "maxResults" &&
+      key !== "options",
+  );
+  if (unknownFields.length > 0) {
+    throw new Error(
+      `Unknown search refinement fields in ${source}: ${unknownFields.join(", ")}.`,
+    );
+  }
+
+  return {
+    description: readOptionalString(
+      refinement.description,
+      source,
+      `${field}.description`,
+    ),
+    queryPrefix: readOptionalString(
+      refinement.queryPrefix,
+      source,
+      `${field}.queryPrefix`,
+    ),
+    querySuffix: readOptionalString(
+      refinement.querySuffix,
+      source,
+      `${field}.querySuffix`,
+    ),
+    instructions: readOptionalString(
+      refinement.instructions,
+      source,
+      `${field}.instructions`,
+    ),
+    providers: parseOptionalProviderIdArray(
+      refinement.providers,
+      source,
+      `${field}.providers`,
+      "search",
+    ),
+    maxResults: parseOptionalPositiveInteger(
+      refinement.maxResults,
+      source,
+      `${field}.maxResults`,
+    ),
+    options: parseOptionalRefinementOptions(
+      refinement.options,
+      source,
+      `${field}.options`,
+    ),
+  };
+}
+
+function parseOptionalRefinementOptions(
+  value: unknown,
+  source: string,
+  field: string,
+): Partial<Record<ProviderId, Record<string, unknown>>> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const options = requireObject(
+    value,
+    `'${field}' in ${source} must be a JSON object.`,
+  );
+  const unknownProviders = Object.keys(options).filter(
+    (key) => !PROVIDER_IDS.includes(key as ProviderId),
+  );
+  if (unknownProviders.length > 0) {
+    throw new Error(
+      `Unknown providers in ${source}: ${unknownProviders.join(", ")}.`,
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(options).map(([providerId, providerOptions]) => [
+      providerId,
+      requireObject(
+        providerOptions,
+        `'${field}.${providerId}' in ${source} must be a JSON object.`,
+      ),
+    ]),
+  ) as Partial<Record<ProviderId, Record<string, unknown>>>;
 }
 
 function parseOptionalCustomProviderOptions(

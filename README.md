@@ -116,6 +116,54 @@ retry, timeout, and background contents prefetch under `settings` and
 
 </details>
 
+#### Provider-specific and routed search tools
+
+`web_search` still follows the top-level `tools.search` provider mapping. You
+can also opt into additional search tools under `settings.search`:
+
+- `web_search_<provider>` — direct provider tools generated for configured
+  search providers. Each tool includes a soft speed score in its description
+  and prompt guidance: lower numbers are faster/preferred. The score is scaled
+  to reflect real latency gaps: direct/API providers are usually
+  millisecond-to-seconds tools, while LLM-backed providers can take minutes.
+- `web_search_multi` — speed score `10`; runs one query across several
+  providers and/or named refinements, returning grouped results with latency
+  and errors. Use it for cross-checking, not as the default first lookup.
+- `web_search_agent` — speed score `100`; a lightweight routing tool that
+  chooses providers and refinements heuristically from the task, then runs the
+  selected searches and returns a trace. Prefer direct lower-score tools first
+  unless provider/refinement routing is the point. By default it avoids very
+  slow providers when lower-score direct providers are available.
+
+Named refinements let you define reusable query and provider-option presets:
+
+```json
+{
+  "settings": {
+    "search": {
+      "providerTools": ["brave", "codex"],
+      "multiProvider": true,
+      "router": true,
+      "refinements": {
+        "fresh_official": {
+          "description": "Fresh official sources",
+          "querySuffix": "official latest",
+          "providers": ["brave", "codex"],
+          "maxResults": 5,
+          "options": {
+            "brave": { "web": { "freshness": "pd" } },
+            "codex": { "webSearchMode": "live" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Built-in refinement names are `fresh`, `official`, `russian_news`, and `broad`;
+entries in `settings.search.refinements` override or extend them.
+
 #### `web_contents`
 
 Read the main text from one or more web pages. It reuses cached pages when they
