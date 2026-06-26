@@ -185,6 +185,49 @@ describe("config parsing", () => {
     });
   });
 
+  it("parses Grok provider config", () => {
+    const parsed = parseConfig(
+      JSON.stringify({
+        tools: {
+          search: "grok",
+        },
+        providers: {
+          grok: {
+            grokPath: "/usr/local/bin/grok",
+            credentials: { api: "XAI_API_KEY" },
+            env: { GROK_SANDBOX: "readonly" },
+            options: {
+              model: "grok-build",
+              effort: "high",
+              maxTurns: 5,
+              searchMode: "x",
+            },
+            settings: {
+              requestTimeoutMs: 45000,
+            },
+          },
+        },
+      }),
+      "test-config.json",
+    );
+
+    expect(parsed.tools?.search).toBe("grok");
+    expect(parsed.providers?.grok).toEqual({
+      grokPath: "/usr/local/bin/grok",
+      credentials: { api: "XAI_API_KEY" },
+      env: { GROK_SANDBOX: "readonly" },
+      options: {
+        model: "grok-build",
+        effort: "high",
+        maxTurns: 5,
+        searchMode: "x",
+      },
+      settings: {
+        requestTimeoutMs: 45000,
+      },
+    });
+  });
+
   it("parses Linkup provider config", () => {
     const parsed = parseConfig(
       JSON.stringify({

@@ -249,6 +249,7 @@ function getProviderConfigFieldParser(
     case "accountId":
     case "baseUrl":
     case "codexPath":
+    case "grokPath":
     case "pathToClaudeCodeExecutable":
       return readOptionalString;
     case "config":
@@ -823,6 +824,9 @@ function toPublicProviderConfig(
       : {}),
     ...("codexPath" in provider && provider.codexPath !== undefined
       ? { codexPath: provider.codexPath }
+      : {}),
+    ...("grokPath" in provider && provider.grokPath !== undefined
+      ? { grokPath: provider.grokPath }
       : {}),
     ...("baseUrl" in provider && provider.baseUrl !== undefined
       ? { baseUrl: provider.baseUrl }

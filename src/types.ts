@@ -10,6 +10,7 @@ export const PROVIDER_IDS = [
   "exa",
   "firecrawl",
   "gemini",
+  "grok",
   "linkup",
   "ollama",
   "openai",
@@ -164,6 +165,13 @@ export interface GeminiOptions {
   searchModel?: string;
   answerModel?: string;
   researchAgent?: string;
+}
+
+export interface GrokOptions {
+  model?: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  maxTurns?: number;
+  searchMode?: "web" | "x" | "both";
 }
 
 export interface LinkupOptions {
@@ -367,6 +375,11 @@ export interface Firecrawl extends Provider<FirecrawlOptions> {
 
 export interface Gemini extends Provider<GeminiOptions> {}
 
+export interface Grok extends Provider<GrokOptions> {
+  grokPath?: string;
+  env?: Record<string, string>;
+}
+
 export interface Linkup extends Provider<LinkupOptions> {
   baseUrl?: string;
 }
@@ -414,6 +427,7 @@ export interface ProviderConfigMap {
   exa: Exa;
   firecrawl: Firecrawl;
   gemini: Gemini;
+  grok: Grok;
   linkup: Linkup;
   ollama: Ollama;
   openai: OpenAI;

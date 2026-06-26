@@ -15,7 +15,7 @@ not as a replacement for source inspection or deeper research.
 ## ✨ Features
 
 - **Multiple providers**: Brave, Claude, Cloudflare, Codex, Exa, Firecrawl,
-  Gemini, Linkup, Ollama, OpenAI, Perplexity, Parallel, Serper,
+  Gemini, Grok, Linkup, Ollama, OpenAI, Perplexity, Parallel, Serper,
   [Tavily](https://tavily.com), Valyu
 - **Provider-aware tool options**: pi only exposes the provider settings that
   actually apply to the backend you selected, so tool calls are easier to
@@ -56,8 +56,9 @@ reported when the tool is actually called.
 
 | Provider   | search | contents | answer | research | Auth                   |
 | ---------- | :----: | :------: | :----: | :------: | ---------------------- |
-| **Claude** |   ✔    |          |   ✔    |          | Local Claude Code auth |
-| **Codex**  |   ✔    |          |        |          | Local Codex CLI auth   |
+| **Claude** |   ✔    |          |   ✔    |          | Local Claude Code auth          |
+| **Codex**  |   ✔    |          |        |          | Local Codex CLI auth            |
+| **Grok**   |   ✔    |          |        |          | Local Grok CLI auth / xAI key   |
 
 **API-backed providers**
 
@@ -356,6 +357,57 @@ scope, or account ID is usually wrong.
 - Exposes `model`, `modelReasoningEffort`, and `webSearchMode` as provider
   options for `web_search`
 - Best if you already use the local Codex CLI and auth flow
+
+</details>
+
+<details>
+<summary><strong>Grok</strong></summary>
+
+- CLI: official `grok` binary from `@xai-official/grok`
+- Supports `web_search` through Grok Build headless mode with structured JSON output
+- Uses local `grok login` authentication by default; optionally set `credentials.api` or `env.XAI_API_KEY` for headless/API-key runs
+- Exposes `model`, `effort`, optional `maxTurns`, and `searchMode` (`web`, `x`, or `both`) for `web_search`; internally `effort` is passed to Grok CLI as `--reasoning-effort`
+- Best if you already use Grok Build locally and want pi to reuse that subscription-backed CLI auth path
+
+**Setup**
+
+```bash
+npm i -g @xai-official/grok
+grok login
+```
+
+Then configure pi to route search to Grok:
+
+```json
+{
+  "tools": {
+    "search": "grok"
+  },
+  "providers": {
+    "grok": {
+      "options": {
+        "model": "grok-build",
+        "effort": "low",
+        "searchMode": "web"
+      }
+    }
+  }
+}
+```
+
+For X/Twitter-focused searches, use per-call options or a default:
+
+```json
+{
+  "providers": {
+    "grok": {
+      "options": {
+        "searchMode": "x"
+      }
+    }
+  }
+}
+```
 
 </details>
 

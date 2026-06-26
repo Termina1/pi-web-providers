@@ -7,6 +7,7 @@ import { defineProviders } from "./definition.js";
 import { exaProvider } from "./exa.js";
 import { firecrawlProvider } from "./firecrawl.js";
 import { geminiProvider } from "./gemini.js";
+import { grokProvider } from "./grok.js";
 import { linkupProvider } from "./linkup.js";
 import { ollamaProvider } from "./ollama.js";
 import { openaiProvider } from "./openai.js";
@@ -25,6 +26,7 @@ export const PROVIDERS = defineProviders({
   exa: exaProvider,
   firecrawl: firecrawlProvider,
   gemini: geminiProvider,
+  grok: grokProvider,
   linkup: linkupProvider,
   ollama: ollamaProvider,
   openai: openaiProvider,

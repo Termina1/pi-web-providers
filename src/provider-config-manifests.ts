@@ -13,6 +13,8 @@ import type {
   Firecrawl,
   Gemini,
   GeminiOptions,
+  Grok,
+  GrokOptions,
   Linkup,
   Ollama,
   OpenAI,
@@ -525,6 +527,97 @@ const PROVIDER_SETTINGS = {
       }),
     ],
   },
+  grok: {
+    settings: [
+      credentialSetting<Grok>({
+        help: "Optional xAI API key for headless Grok CLI runs. Leave empty to use the local `grok login` session. You can use a literal value, an env var name like XAI_API_KEY, or !command.",
+      }),
+      stringSetting<Grok>({
+        id: "grokPath",
+        label: "Executable path",
+        help: "Optional path to the Grok CLI executable. Leave empty to use `grok` from PATH.",
+        getValue: (config) => config?.grokPath,
+        setValue: (config, value) => {
+          assignOptionalString(
+            config as Record<
+              string,
+              string | number | boolean | Record<string, unknown> | undefined
+            >,
+            "grokPath",
+            value,
+          );
+        },
+      }),
+      stringSetting<Grok>({
+        id: "grokModel",
+        label: "Model",
+        help: "Optional Grok model override. Leave empty to use the CLI default.",
+        getValue: (config) => getGrokOptions(config)?.model,
+        setValue: (config, value) => {
+          assignOptionalString(
+            ensureGrokOptions(config) as Record<
+              string,
+              string | number | boolean | Record<string, unknown> | undefined
+            >,
+            "model",
+            value,
+          );
+          cleanupEmpty(config, "options");
+        },
+      }),
+      valuesSetting<Grok>({
+        id: "grokSearchMode",
+        label: "Search mode",
+        help: "Which Grok search surface to prefer. 'default' uses web search.",
+        values: ["default", "web", "x", "both"],
+        getValue: (config) => getGrokOptions(config)?.searchMode ?? "default",
+        setValue: (config, value) => {
+          const options = ensureGrokOptions(config);
+          if (value === "default") {
+            delete options.searchMode;
+          } else {
+            options.searchMode = value as GrokOptions["searchMode"];
+          }
+          cleanupEmpty(config, "options");
+        },
+      }),
+      valuesSetting<Grok>({
+        id: "grokEffort",
+        label: "Effort",
+        help: "Grok Build reasoning effort. 'default' uses the provider default.",
+        values: ["default", "low", "medium", "high", "xhigh", "max"],
+        getValue: (config) => getGrokOptions(config)?.effort ?? "default",
+        setValue: (config, value) => {
+          const options = ensureGrokOptions(config);
+          if (value === "default") {
+            delete options.effort;
+          } else {
+            options.effort = value as GrokOptions["effort"];
+          }
+          cleanupEmpty(config, "options");
+        },
+      }),
+      stringSetting<Grok>({
+        id: "grokMaxTurns",
+        label: "Max turns",
+        help: "Optional maximum number of Grok agent turns. Leave empty to use the CLI default.",
+        getValue: (config) =>
+          getIntegerString(getGrokOptions(config)?.maxTurns),
+        setValue: (config, value) => {
+          assignOptionalInteger(
+            ensureGrokOptions(config) as Record<
+              string,
+              string | number | boolean | Record<string, unknown> | undefined
+            >,
+            "maxTurns",
+            value,
+            "Grok max turns must be a positive integer.",
+          );
+          cleanupEmpty(config, "options");
+        },
+      }),
+    ],
+  },
   linkup: {
     settings: [credentialSetting<Linkup>(), baseUrlSetting<Linkup>()],
   },
@@ -996,6 +1089,15 @@ function ensureCodexOptions(config: Codex): CodexOptions {
 
 function getGeminiOptions(config: Gemini | undefined) {
   return config?.options;
+}
+
+function getGrokOptions(config: Grok | undefined) {
+  return config?.options;
+}
+
+function ensureGrokOptions(config: Grok): GrokOptions {
+  config.options = { ...(config.options ?? {}) };
+  return config.options;
 }
 
 function ensureGeminiOptions(

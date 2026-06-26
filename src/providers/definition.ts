@@ -59,6 +59,7 @@ export type ProviderConfigField =
   | "config"
   | "customOptions"
   | "env"
+  | "grokPath"
   | "options"
   | "pathToClaudeCodeExecutable"
   | "settings";

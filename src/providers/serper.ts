@@ -12,7 +12,12 @@ import type {
 } from "../types.js";
 import { SERPER_SEARCH_MODE_VALUES } from "../types.js";
 import { defineCapability, defineProvider } from "./definition.js";
-import { asJsonObject, getApiKeyStatus, stringEnum, trimSnippet } from "./shared.js";
+import {
+  asJsonObject,
+  getApiKeyStatus,
+  stringEnum,
+  trimSnippet,
+} from "./shared.js";
 
 const DEFAULT_BASE_URL = "https://google.serper.dev";
 const DEFAULT_SCRAPE_URL = "https://scrape.serper.dev";
