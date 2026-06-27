@@ -17,27 +17,6 @@ const DEFAULT_SEARCH_MODE = "web";
 const DEFAULT_MODEL = "grok-build";
 const DEFAULT_REASONING_EFFORT = "low";
 
-const SEARCH_OUTPUT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["sources"],
-  properties: {
-    sources: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["title", "url", "snippet"],
-        properties: {
-          title: { type: "string" },
-          url: { type: "string" },
-          snippet: { type: "string" },
-        },
-      },
-    },
-  },
-} as const;
-
 interface GrokSearchOutput {
   sources: Array<{
     title: string;
@@ -149,9 +128,8 @@ const grokImplementation = {
     options?: Record<string, unknown>,
   ): Promise<SearchResponse> {
     const output = parseGrokSearchOutput(
-      await runGrokStructuredQuery({
+      await runGrokJsonQuery({
         prompt: buildSearchPrompt(query, maxResults, config, options),
-        schema: SEARCH_OUTPUT_SCHEMA,
         config,
         context,
         options,
@@ -169,15 +147,13 @@ const grokImplementation = {
   },
 };
 
-async function runGrokStructuredQuery({
+async function runGrokJsonQuery({
   prompt,
-  schema,
   config,
   context,
   options,
 }: {
   prompt: string;
-  schema: Record<string, unknown>;
   config: Grok;
   context: ProviderContext;
   options: Record<string, unknown> | undefined;
@@ -193,8 +169,6 @@ async function runGrokStructuredQuery({
     prompt,
     "--output-format",
     "json",
-    "--json-schema",
-    JSON.stringify(schema),
     "--permission-mode",
     "dontAsk",
     "--cwd",
@@ -230,7 +204,9 @@ async function runGrokStructuredQuery({
   }
 
   if (result.structuredOutputError) {
-    throw new Error(result.structuredOutputError);
+    throw new Error(
+      `structured output failed and Grok returned no text: ${result.structuredOutputError}`,
+    );
   }
 
   throw new Error("returned an empty response");

@@ -364,7 +364,7 @@ scope, or account ID is usually wrong.
 <summary><strong>Grok</strong></summary>
 
 - CLI: official `grok` binary from `@xai-official/grok`
-- Supports `web_search` through Grok Build headless mode with structured JSON output
+- Supports `web_search` through Grok Build headless mode with JSON-formatted output and local validation
 - Uses local `grok login` authentication by default; optionally set `credentials.api` or `env.XAI_API_KEY` for headless/API-key runs
 - Exposes `model`, `effort`, optional `maxTurns`, and `searchMode` (`web`, `x`, or `both`) for `web_search`; internally `effort` is passed to Grok CLI as `--reasoning-effort`
 - Best if you already use Grok Build locally and want pi to reuse that subscription-backed CLI auth path

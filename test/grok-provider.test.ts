@@ -55,7 +55,7 @@ describe("Grok provider", () => {
     });
   });
 
-  it("runs Grok CLI headlessly with structured output and sanitized options", async () => {
+  it("runs Grok CLI headlessly with JSON text output and sanitized options", async () => {
     mockSpawnResult({
       text: JSON.stringify({
         sources: [
@@ -66,15 +66,6 @@ describe("Grok provider", () => {
           },
         ],
       }),
-      structuredOutput: {
-        sources: [
-          {
-            title: "Grok docs",
-            url: "https://docs.x.ai/build/overview",
-            snippet: "Official Grok Build docs",
-          },
-        ],
-      },
     });
 
     const provider = providerHarness(grokProvider);
@@ -116,8 +107,6 @@ describe("Grok provider", () => {
         expect.stringContaining("Use Grok's X Search tool"),
         "--output-format",
         "json",
-        "--json-schema",
-        expect.any(String),
         "--permission-mode",
         "dontAsk",
         "--cwd",
@@ -132,10 +121,7 @@ describe("Grok provider", () => {
     );
     expect(args).not.toContain("/tmp/override");
     expect(args).not.toContain("bypassPermissions");
-    expect(JSON.parse(args[args.indexOf("--json-schema") + 1])).toMatchObject({
-      type: "object",
-      required: ["sources"],
-    });
+    expect(args).not.toContain("--json-schema");
     expect(options).toMatchObject({
       cwd: "/repo",
       stdio: ["ignore", "pipe", "pipe"],

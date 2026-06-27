@@ -10,6 +10,7 @@ const PROVIDERS_BY_TOOL = {
     "custom",
     "exa",
     "gemini",
+    "grok",
     "linkup",
     "perplexity",
     "parallel",
